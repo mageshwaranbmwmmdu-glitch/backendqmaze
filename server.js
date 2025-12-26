@@ -8,26 +8,39 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// DATABASE CONNECTION
-const db = mysql.createConnection({
+// DATABASE CONNECTION (Updated to Connection Pool for Stability)
+// 'createPool' automatically reconnects if the DB connection is lost (common on Render/TiDB)
+const db = mysql.createPool({
     host: process.env.DB_HOST || 'gateway01.ap-southeast-1.prod.aws.tidbcloud.com', 
     port: process.env.DB_PORT || 4000,
     user: process.env.DB_USER || '2mEE8MFQ91iN7ye.root', 
     password: process.env.DB_PASSWORD || 'tGU9ocbnUjlt4d5V', 
     database: process.env.DB_NAME || 'qmaze_db',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
     ssl: { 
         minVersion: 'TLSv1.2', 
         rejectUnauthorized: false 
     }
 });
 
-db.connect(err => {
+// Test Connection and Initialize Tables
+db.getConnection((err, connection) => {
     if (err) {
         console.error('DB Connection Failed:', err.message);
-        return;
+    } else {
+        console.log('TiDB Connected Successfully via Pool.');
+        
+        // Initialize Tables
+        initializeTables(connection);
+        
+        // Release the connection back to the pool
+        connection.release();
     }
-    console.log('TiDB Connected Successfully.');
+});
 
+function initializeTables(conn) {
     // Users Table
     const usersTableSQL = `
         CREATE TABLE IF NOT EXISTS users (
@@ -53,9 +66,9 @@ db.connect(err => {
         )
     `;
 
-    db.query(usersTableSQL);
-    db.query(levelTimesTableSQL);
-});
+    conn.query(usersTableSQL);
+    conn.query(levelTimesTableSQL);
+}
 
 // --- ROUTES ---
 
@@ -67,7 +80,10 @@ app.post('/register', async (req, res) => {
     try {
         const hashed = await bcrypt.hash(password, 10);
         db.query('INSERT INTO users (username, password) VALUES (?, ?)', [username, hashed], (err) => {
-            if (err) return res.status(400).send("User exists or error");
+            if (err) {
+                console.error("Register DB Error:", err);
+                return res.status(400).send("User exists or error");
+            }
             res.status(201).send("Registered");
         });
     } catch (e) {
@@ -97,7 +113,10 @@ app.post('/save-time', (req, res) => {
                    wrong=VALUES(wrong), wrong_penalty=VALUES(wrong_penalty), cheat_penalty=VALUES(cheat_penalty)`;
     
     db.query(query, [username, level_id, time_spent, points, correct, wrong, wrong_penalty, cheat_penalty], (err) => {
-        if (err) return res.status(500).send("Save Fail");
+        if (err) {
+            console.error("Save Error:", err.message); // Added logging
+            return res.status(500).send("Save Fail");
+        }
         res.status(200).send("Saved");
     });
 });
