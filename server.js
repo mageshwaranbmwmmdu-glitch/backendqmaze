@@ -67,7 +67,7 @@ function initializeTables(conn) {
 
 // --- ROUTES ---
 
-// 1. REGISTER (Public)
+// 1. REGISTER
 app.post('/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).send("Missing fields");
@@ -132,7 +132,7 @@ app.post('/reset-progress', (req, res) => {
 
 // --- ADMIN ROUTES ---
 
-// 6. CREATE USER (Admin Manual Add)
+// 6. CREATE USER
 app.post('/admin/create-user', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Missing fields" });
@@ -177,6 +177,36 @@ app.get('/admin/stats', (req, res) => {
     Promise.all([q1, q2])
         .then(([userCount, playsCount]) => res.json({ userCount, playsCount }))
         .catch(err => res.status(500).json({ error: err.message }));
+});
+
+// 9. GET ALL USERS (Simple list for removal menu)
+app.get('/admin/users', (req, res) => {
+    db.query('SELECT id, username, login_count FROM users ORDER BY id ASC', (err, results) => {
+        if (err) return res.status(500).send("DB Error");
+        res.status(200).json(results);
+    });
+});
+
+// 10. DELETE USER
+app.delete('/admin/user/:username', (req, res) => {
+    const username = req.params.username;
+    
+    // 1. Delete gameplay data
+    db.query('DELETE FROM level_times WHERE username = ?', [username], (err) => {
+        if (err) {
+            console.error("Delete level_times error:", err);
+            return res.status(500).json({ error: "Failed to clear user data" });
+        }
+        
+        // 2. Delete user account
+        db.query('DELETE FROM users WHERE username = ?', [username], (err, result) => {
+            if (err) {
+                console.error("Delete user error:", err);
+                return res.status(500).json({ error: "Failed to delete user account" });
+            }
+            res.status(200).json({ message: "User deleted successfully" });
+        });
+    });
 });
 
 const PORT = process.env.PORT || 3000;
