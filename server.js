@@ -33,7 +33,6 @@ db.getConnection((err, connection) => {
 });
 
 function initializeTables(conn) {
-    // 1. Users Table (Added login_count)
     const usersTableSQL = `
         CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -43,7 +42,6 @@ function initializeTables(conn) {
         )
     `;
 
-    // 2. Level Times Table
     const levelTimesTableSQL = `
         CREATE TABLE IF NOT EXISTS level_times (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -61,7 +59,6 @@ function initializeTables(conn) {
 
     conn.query(usersTableSQL, (err) => {
         if (!err) {
-            // MIGRATION: Attempt to add login_count if it doesn't exist (safe for existing DBs)
             conn.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INT DEFAULT 0");
         }
     });
@@ -70,14 +67,13 @@ function initializeTables(conn) {
 
 // --- ROUTES ---
 
-// 1. REGISTER
+// 1. REGISTER (Public)
 app.post('/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).send("Missing fields");
 
     try {
         const hashed = await bcrypt.hash(password, 10);
-        // Initialize login_count as 0
         db.query('INSERT INTO users (username, password, login_count) VALUES (?, ?, 0)', [username, hashed], (err) => {
             if (err) return res.status(400).send("User exists or error");
             res.status(201).send("Registered");
@@ -87,7 +83,7 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// 2. LOGIN (Increments Login Count)
+// 2. LOGIN
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
     db.query('SELECT * FROM users WHERE username = ?', [username], async (err, results) => {
@@ -96,7 +92,6 @@ app.post('/login', (req, res) => {
         const valid = await bcrypt.compare(password, results[0].password);
         if (!valid) return res.status(401).send("Wrong pass");
         
-        // INCREMENT LOGIN COUNT
         db.query('UPDATE users SET login_count = login_count + 1 WHERE id = ?', [results[0].id]);
 
         res.status(200).send("Success");
@@ -135,11 +130,29 @@ app.post('/reset-progress', (req, res) => {
     });
 });
 
-// --- ADMIN ENDPOINTS ---
+// --- ADMIN ROUTES ---
 
-// 6. GET ALL RESULTS (UPDATED: Joins with Users table to get login_count)
+// 6. CREATE USER (Admin Manual Add)
+app.post('/admin/create-user', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Missing fields" });
+
+    try {
+        const hashed = await bcrypt.hash(password, 10);
+        db.query('INSERT INTO users (username, password, login_count) VALUES (?, ?, 0)', [username, hashed], (err) => {
+            if (err) {
+                if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: "Username already exists" });
+                return res.status(500).json({ error: "Database error" });
+            }
+            res.status(201).json({ message: "User created successfully" });
+        });
+    } catch (e) {
+        res.status(500).json({ error: "Server error" });
+    }
+});
+
+// 7. GET ALL RESULTS
 app.get('/admin/all-results', (req, res) => {
-    // Join level_times with users to get the login_count for the dashboard
     const query = `
         SELECT lt.*, u.login_count 
         FROM level_times lt 
@@ -147,15 +160,12 @@ app.get('/admin/all-results', (req, res) => {
         ORDER BY lt.level_id ASC, lt.points DESC, lt.time_spent ASC
     `;
     db.query(query, (err, results) => {
-        if (err) {
-            console.error(err);
-            return res.status(500).send("DB Error");
-        }
+        if (err) return res.status(500).send("DB Error");
         res.status(200).json(results);
     });
 });
 
-// 7. GET SYSTEM STATS
+// 8. GET STATS
 app.get('/admin/stats', (req, res) => {
     const q1 = new Promise((resolve, reject) => {
         db.query('SELECT COUNT(*) as count FROM users', (err, r) => err ? reject(err) : resolve(r[0].count));
