@@ -41,7 +41,6 @@ function initializeTables(conn) {
         )
     `;
 
-    // ADDED level_flow, match_log, clue_log columns to schema
     const levelTimesTableSQL = `
         CREATE TABLE IF NOT EXISTS level_times (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -66,7 +65,6 @@ function initializeTables(conn) {
 
     conn.query(levelTimesTableSQL, (err) => {
         if (!err) {
-            // MIGRATION: Add new columns if missing
             conn.query("ALTER TABLE level_times ADD COLUMN IF NOT EXISTS match_log TEXT");
             conn.query("ALTER TABLE level_times ADD COLUMN IF NOT EXISTS clue_log TEXT");
             conn.query("ALTER TABLE level_times ADD COLUMN IF NOT EXISTS level_flow VARCHAR(255)");
@@ -99,7 +97,6 @@ app.post('/login', (req, res) => {
     });
 });
 
-// UPDATED SAVE TIME to include all logs and flow
 app.post('/save-time', (req, res) => {
     const { 
         username, level_id, time_spent, points, correct, wrong, 
@@ -190,6 +187,18 @@ app.delete('/admin/user/:username', (req, res) => {
             if (err) return res.status(500).json({ error: "Failed to delete user account" });
             res.status(200).json({ message: "User deleted successfully" });
         });
+    });
+});
+
+// NEW: Reset Login Count Endpoint
+app.post('/admin/user/:username/reset-login', (req, res) => {
+    const username = req.params.username;
+    db.query('UPDATE users SET login_count = 0 WHERE username = ?', [username], (err, result) => {
+        if (err) {
+            console.error("Reset login error:", err);
+            return res.status(500).json({ error: "Database error" });
+        }
+        res.status(200).json({ message: "Login count reset to 0" });
     });
 });
 
