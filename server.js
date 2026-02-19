@@ -39,7 +39,7 @@ function initializeTables(conn) {
             username VARCHAR(255) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
             login_count INT DEFAULT 0,
-            level_flow VARCHAR(255) DEFAULT '0,1,2,3,4',
+            level_flow VARCHAR(255),
             current_level INT DEFAULT 1
         )
     `;
@@ -226,3 +226,4 @@ app.post('/admin/user/:username/reset-login', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
