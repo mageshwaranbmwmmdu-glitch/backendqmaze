@@ -32,12 +32,15 @@ db.getConnection((err, connection) => {
 });
 
 function initializeTables(conn) {
+    // UPDATED USERS TABLE SCHEMA
     const usersTableSQL = `
         CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
             username VARCHAR(255) NOT NULL UNIQUE,
             password VARCHAR(255) NOT NULL,
-            login_count INT DEFAULT 0
+            login_count INT DEFAULT 0,
+            level_flow VARCHAR(255) DEFAULT '0,1,2,3,4',
+            current_level INT DEFAULT 1
         )
     `;
 
@@ -60,7 +63,12 @@ function initializeTables(conn) {
     `;
 
     conn.query(usersTableSQL, (err) => {
-        if (!err) conn.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INT DEFAULT 0");
+        if (!err) {
+            // MIGRATION: Add new columns to users if they don't exist
+            conn.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS login_count INT DEFAULT 0");
+            conn.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS level_flow VARCHAR(255) DEFAULT '0,1,2,3,4'");
+            conn.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS current_level INT DEFAULT 1");
+        }
     });
 
     conn.query(levelTimesTableSQL, (err) => {
@@ -79,7 +87,11 @@ app.post('/register', async (req, res) => {
     if (!username || !password) return res.status(400).send("Missing fields");
     try {
         const hashed = await bcrypt.hash(password, 10);
-        db.query('INSERT INTO users (username, password, login_count) VALUES (?, ?, 0)', [username, hashed], (err) => {
+        // Default flow: 0,1,2,3,4 (Temple -> Audi -> Canteen -> PG Lab -> Statue)
+        // You might want to randomize this per user if your game logic requires it
+        const defaultFlow = "0,1,2,3,4"; 
+        db.query('INSERT INTO users (username, password, login_count, level_flow, current_level) VALUES (?, ?, 0, ?, 1)', 
+            [username, hashed, defaultFlow], (err) => {
             if (err) return res.status(400).send("User exists or error");
             res.status(201).send("Registered");
         });
@@ -92,6 +104,7 @@ app.post('/login', (req, res) => {
         if (err || results.length === 0) return res.status(401).send("Not found");
         const valid = await bcrypt.compare(password, results[0].password);
         if (!valid) return res.status(401).send("Wrong pass");
+        
         db.query('UPDATE users SET login_count = login_count + 1 WHERE id = ?', [results[0].id]);
         res.status(200).send("Success");
     });
@@ -105,6 +118,7 @@ app.post('/save-time', (req, res) => {
     
     if (!username || !level_id) return res.status(400).send("Missing data");
 
+    // 1. Save Level Data
     const query = `INSERT INTO level_times 
                    (username, level_id, time_spent, points, correct, wrong, wrong_penalty, cheat_penalty, match_log, clue_log, level_flow) 
                    VALUES (?,?,?,?,?,?,?,?,?,?,?) 
@@ -124,6 +138,12 @@ app.post('/save-time', (req, res) => {
             console.error("Save Error:", err.message);
             return res.status(500).send("Save Fail");
         }
+        
+        // 2. Update User's Current Level (Assuming successful save means level complete)
+        // Logic: If user saves Level 1, current_level becomes 2.
+        const nextLevel = parseInt(level_id) + 1;
+        db.query('UPDATE users SET current_level = GREATEST(current_level, ?) WHERE username = ?', [nextLevel, username]);
+
         res.status(200).send("Saved");
     });
 });
@@ -136,8 +156,10 @@ app.get('/user-results/:username', (req, res) => {
 });
 
 app.post('/reset-progress', (req, res) => {
-    db.query('DELETE FROM level_times WHERE username = ?', [req.body.username], (err) => {
+    const { username } = req.body;
+    db.query('DELETE FROM level_times WHERE username = ?', [username], (err) => {
         if (err) return res.status(500).send("Reset Fail");
+        db.query('UPDATE users SET current_level = 1 WHERE username = ?', [username]); // Reset level
         res.status(200).send("Reset Done");
     });
 });
@@ -148,7 +170,10 @@ app.post('/admin/create-user', async (req, res) => {
     if (!username || !password) return res.status(400).json({ error: "Missing fields" });
     try {
         const hashed = await bcrypt.hash(password, 10);
-        db.query('INSERT INTO users (username, password, login_count) VALUES (?, ?, 0)', [username, hashed], (err) => {
+        // Default Flow
+        const defaultFlow = "0,1,2,3,4";
+        db.query('INSERT INTO users (username, password, login_count, level_flow, current_level) VALUES (?, ?, 0, ?, 1)', 
+            [username, hashed, defaultFlow], (err) => {
             if (err) {
                 if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: "Username already exists" });
                 return res.status(500).json({ error: "Database error" });
@@ -159,7 +184,7 @@ app.post('/admin/create-user', async (req, res) => {
 });
 
 app.get('/admin/all-results', (req, res) => {
-    const query = `SELECT lt.*, u.login_count FROM level_times lt JOIN users u ON lt.username = u.username ORDER BY lt.level_id ASC, lt.points DESC, lt.time_spent ASC`;
+    const query = `SELECT lt.*, u.login_count, u.current_level, u.level_flow as user_flow FROM level_times lt JOIN users u ON lt.username = u.username ORDER BY lt.level_id ASC, lt.points DESC, lt.time_spent ASC`;
     db.query(query, (err, results) => {
         if (err) return res.status(500).send("DB Error");
         res.status(200).json(results);
@@ -172,8 +197,9 @@ app.get('/admin/stats', (req, res) => {
     Promise.all([q1, q2]).then(([userCount, playsCount]) => res.json({ userCount, playsCount })).catch(err => res.status(500).json({ error: err.message }));
 });
 
+// UPDATED: Get Users now returns flow and current_level for live tracking
 app.get('/admin/users', (req, res) => {
-    db.query('SELECT id, username, login_count FROM users ORDER BY id ASC', (err, results) => {
+    db.query('SELECT id, username, login_count, level_flow, current_level FROM users ORDER BY id ASC', (err, results) => {
         if (err) return res.status(500).send("DB Error");
         res.status(200).json(results);
     });
@@ -190,14 +216,10 @@ app.delete('/admin/user/:username', (req, res) => {
     });
 });
 
-// NEW: Reset Login Count Endpoint
 app.post('/admin/user/:username/reset-login', (req, res) => {
     const username = req.params.username;
     db.query('UPDATE users SET login_count = 0 WHERE username = ?', [username], (err, result) => {
-        if (err) {
-            console.error("Reset login error:", err);
-            return res.status(500).json({ error: "Database error" });
-        }
+        if (err) return res.status(500).json({ error: "Database error" });
         res.status(200).json({ message: "Login count reset to 0" });
     });
 });
