@@ -32,7 +32,7 @@ db.getConnection((err, connection) => {
 });
 
 function initializeTables(conn) {
-    // UPDATED USERS TABLE SCHEMA - Removed default values for level_flow
+    // 1. USERS TABLE
     const usersTableSQL = `
         CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -44,6 +44,7 @@ function initializeTables(conn) {
         )
     `;
 
+    // 2. LEVEL TIMES TABLE
     const levelTimesTableSQL = `
         CREATE TABLE IF NOT EXISTS level_times (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -62,6 +63,30 @@ function initializeTables(conn) {
         )
     `;
 
+    // 3. GAME FEEDBACK TABLE (NEW)
+    const feedbackTableSQL = `
+        CREATE TABLE IF NOT EXISTS game_feedback (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255),
+            rating_app INT,
+            rating_clues INT,
+            rating_venue INT,
+            rating_ground INT,
+            rating_vibe INT,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `;
+
+    // 4. GAME SUGGESTIONS TABLE (NEW)
+    const suggestionsTableSQL = `
+        CREATE TABLE IF NOT EXISTS game_suggestions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255),
+            suggestion_text TEXT,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `;
+
     conn.query(usersTableSQL, (err) => {
         if (!err) {
             // MIGRATION: Add new columns to users if they don't exist
@@ -77,6 +102,15 @@ function initializeTables(conn) {
             conn.query("ALTER TABLE level_times ADD COLUMN IF NOT EXISTS clue_log TEXT");
             conn.query("ALTER TABLE level_times ADD COLUMN IF NOT EXISTS level_flow VARCHAR(255)");
         }
+    });
+
+    // Execute New Table Creations
+    conn.query(feedbackTableSQL, (err) => {
+        if (err) console.error("Error creating game_feedback table:", err.message);
+    });
+
+    conn.query(suggestionsTableSQL, (err) => {
+        if (err) console.error("Error creating game_suggestions table:", err.message);
     });
 }
 
@@ -162,7 +196,9 @@ app.post('/reset-progress', (req, res) => {
     });
 });
 
-// ADMIN ROUTES
+
+// --- ADMIN ROUTES ---
+
 app.post('/admin/create-user', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: "Missing fields" });
@@ -217,6 +253,55 @@ app.post('/admin/user/:username/reset-login', (req, res) => {
     db.query('UPDATE users SET login_count = 0 WHERE username = ?', [username], (err, result) => {
         if (err) return res.status(500).json({ error: "Database error" });
         res.status(200).json({ message: "Login count reset to 0" });
+    });
+});
+
+
+// --- FEEDBACK & SUGGESTIONS ROUTES ---
+
+app.get('/admin/feedbacks', (req, res) => {
+    db.query('SELECT * FROM game_feedback ORDER BY submitted_at DESC', (err, results) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        res.status(200).json(results);
+    });
+});
+
+app.get('/admin/suggestions', (req, res) => {
+    db.query('SELECT * FROM game_suggestions ORDER BY submitted_at DESC', (err, results) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        res.status(200).json(results);
+    });
+});
+
+app.post('/api/feedback', (req, res) => {
+    const { username, rating_app, rating_clues, rating_venue, rating_ground, rating_vibe } = req.body;
+    
+    const query = `
+        INSERT INTO game_feedback 
+        (username, rating_app, rating_clues, rating_venue, rating_ground, rating_vibe) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    `;
+    
+    db.query(query, [username, rating_app, rating_clues, rating_venue, rating_ground, rating_vibe], (err, result) => {
+        if (err) {
+            console.error("Error saving feedback:", err);
+            return res.status(500).json({ error: "Failed to submit feedback" });
+        }
+        res.status(201).json({ message: "Feedback submitted successfully!" });
+    });
+});
+
+app.post('/api/suggestions', (req, res) => {
+    const { username, suggestion_text } = req.body;
+    
+    const query = 'INSERT INTO game_suggestions (username, suggestion_text) VALUES (?, ?)';
+    
+    db.query(query, [username, suggestion_text], (err, result) => {
+        if (err) {
+            console.error("Error saving suggestion:", err);
+            return res.status(500).json({ error: "Failed to submit suggestion" });
+        }
+        res.status(201).json({ message: "Suggestion submitted successfully!" });
     });
 });
 
