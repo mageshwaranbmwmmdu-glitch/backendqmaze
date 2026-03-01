@@ -63,7 +63,7 @@ function initializeTables(conn) {
         )
     `;
 
-    // 3. GAME FEEDBACK TABLE (NEW)
+    // 3. GAME FEEDBACK TABLE 
     const feedbackTableSQL = `
         CREATE TABLE IF NOT EXISTS game_feedback (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -77,13 +77,21 @@ function initializeTables(conn) {
         )
     `;
 
-    // 4. GAME SUGGESTIONS TABLE (NEW)
+    // 4. GAME SUGGESTIONS TABLE 
     const suggestionsTableSQL = `
         CREATE TABLE IF NOT EXISTS game_suggestions (
             id INT AUTO_INCREMENT PRIMARY KEY,
             username VARCHAR(255),
             suggestion_text TEXT,
             submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `;
+
+    // 5. EVENT LIVE STATUS TABLE (NEW)
+    const eventTableSQL = `
+        CREATE TABLE IF NOT EXISTS event_live (
+            id INT PRIMARY KEY DEFAULT 1,
+            status VARCHAR(50) DEFAULT 'stop'
         )
     `;
 
@@ -104,13 +112,22 @@ function initializeTables(conn) {
         }
     });
 
-    // Execute New Table Creations
+    // Execute Table Creations
     conn.query(feedbackTableSQL, (err) => {
         if (err) console.error("Error creating game_feedback table:", err.message);
     });
 
     conn.query(suggestionsTableSQL, (err) => {
         if (err) console.error("Error creating game_suggestions table:", err.message);
+    });
+
+    conn.query(eventTableSQL, (err) => {
+        if (!err) {
+            // Ensure there is always exactly one row for the global state
+            conn.query("INSERT IGNORE INTO event_live (id, status) VALUES (1, 'stop')");
+        } else {
+            console.error("Error creating event_live table:", err.message);
+        }
     });
 }
 
@@ -253,6 +270,23 @@ app.post('/admin/user/:username/reset-login', (req, res) => {
     db.query('UPDATE users SET login_count = 0 WHERE username = ?', [username], (err, result) => {
         if (err) return res.status(500).json({ error: "Database error" });
         res.status(200).json({ message: "Login count reset to 0" });
+    });
+});
+
+// --- EVENT STATUS ROUTES (NEW) ---
+
+app.get('/admin/event-status', (req, res) => {
+    db.query('SELECT status FROM event_live WHERE id = 1', (err, results) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        res.status(200).json({ status: results[0]?.status || 'stop' });
+    });
+});
+
+app.post('/admin/event-status', (req, res) => {
+    const { status } = req.body;
+    db.query('UPDATE event_live SET status = ? WHERE id = 1', [status], (err) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        res.status(200).json({ message: "Status updated successfully", status });
     });
 });
 
